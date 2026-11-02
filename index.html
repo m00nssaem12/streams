@@ -278,6 +278,49 @@ header.brand.big{margin:4px 0 22px}
 .qrsheet{max-width:620px}
 .qrsheet .bqr{margin:0}
 .qrsheet .bqr img,.qrsheet .bqr canvas{width:min(72vw,56vh,480px)!important;height:auto!important}
+
+/* 전자칠판 단독 모드 */
+.lbtns{display:flex;gap:clamp(8px,1vw,16px);justify-content:center;align-items:stretch;margin:0 auto 2vw;max-width:70vw}
+.lbtns .btn.big{flex:1;font-size:clamp(20px,2.4vw,40px);min-height:clamp(60px,6vw,110px);margin:0}
+.lbtns .btn.ghost{font-size:clamp(16px,1.6vw,26px);padding:0 clamp(14px,2vw,32px)}
+.lset{max-width:640px;margin:0 auto 2vw;text-align:left}
+.lscore{text-align:left}
+.lscore summary{cursor:pointer;font-weight:900;font-size:clamp(18px,2vw,32px)}
+.lscore .chip{font-size:clamp(14px,1.5vw,24px);margin-top:8px}
+.bigtile.xl.pop{animation:lpop .28s ease-out}
+@keyframes lpop{from{transform:scale(.7) rotate(-4deg);opacity:.2}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.bigtile.xl.pop{animation:none}}
+
+/* 워크시트 인쇄 */
+.wsp{width:190mm;max-width:100%;margin:0 auto 14px;padding:4mm;background:#fff;border:1px dashed var(--line);border-radius:6px}
+.ws{border:2px solid var(--navy);border-radius:12px;padding:3.5mm 4mm;margin:0 0 4mm;break-inside:avoid;page-break-inside:avoid;background:#fff}
+.ws:last-child{margin-bottom:0}
+.wshead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:2.5mm;font-weight:700;font-size:13px}
+.wslogo{font-family:var(--disp);font-weight:400;font-size:18px;letter-spacing:.04em}
+.wsline{display:inline-block;border-bottom:1.5px solid var(--navy);width:34mm;height:1em;vertical-align:baseline}
+.wsline.short{width:16mm}
+.wsgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:5.5mm 5mm;padding:1mm 0 0}
+.wsc.ar::after,.wsc.al::after,.wsc.ad::after{position:absolute;color:var(--blue-d);font-size:11px;line-height:1;z-index:1}
+.wsc.ar::after{content:"▶";right:-4.2mm;top:50%;transform:translateY(-50%)}
+.wsc.al::after{content:"◀";left:-4.2mm;top:50%;transform:translateY(-50%)}
+.wsc.ad::after{content:"▼";bottom:-4.4mm;left:50%;transform:translateX(-50%)}
+.wsc em{position:absolute;bottom:1px;right:4px;font:700 8px 'Noto Sans KR',sans-serif;font-style:normal;color:var(--blue-d)}
+.wsc{position:relative;aspect-ratio:5/3;border:2px solid var(--navy);border-radius:8px;background:#fff}
+.per1 .wsc{aspect-ratio:1/1}
+.wsc small{position:absolute;top:1.5px;left:4px;font:700 9px 'Noto Sans KR',sans-serif;color:#6b7683}
+.wsfoot{margin-top:2.5mm;font-size:10px;color:var(--sub);line-height:1.4}
+.wsscore{margin-top:1.5mm;font-size:9px;line-height:1.5;color:var(--ink)}
+.wsscore span{display:inline-block;margin-right:6px;white-space:nowrap}
+.wsbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.wsbar input[type=number]{width:96px;text-align:center;font-size:20px;padding:8px 10px}
+@media print{
+  @page{size:A4;margin:10mm}
+  body{background:#fff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .wrap,#app.narrow{max-width:none!important;margin:0!important;padding:0!important;border:0!important;min-height:0!important;background:#fff!important}
+  .noprint{display:none!important}
+  .wsp{width:auto!important;padding:0!important;margin:0!important;border:0!important;border-radius:0!important;break-after:page;page-break-after:always}
+  .wsp:last-child{break-after:auto;page-break-after:auto}
+}
 </style>
 </head>
 <body>
@@ -348,6 +391,8 @@ function route() {
   app.classList.remove("board", "narrow");
   const parts = location.hash.replace(/^#\/?/, "").split("/");
   const [page, code] = parts;
+  if (page === "local") return viewLocal();
+  if (page === "worksheet") return viewWorksheet();
   if (!configured) return viewSetup();
   if (page === "host" && CODE_RE.test(code || "")) return viewHost(code);
   if (page === "board" && CODE_RE.test(code || "")) return viewBoard(code);
@@ -355,7 +400,6 @@ function route() {
   return viewHome();
 }
 window.addEventListener("hashchange", route);
-route();
 
 /* ============ 설정 안내 ============ */
 function viewSetup() {
@@ -366,7 +410,11 @@ function viewSetup() {
 
 /* ============ 홈 ============ */
 function viewHome() {
-  app.innerHTML = brand(true) + `
+  app.innerHTML = `
+  <div class="row" style="justify-content:flex-end;gap:8px">
+    <button class="btn ghost sm" id="localMode" title="전자칠판 모드" aria-label="전자칠판 모드">🖥️</button>
+    <button class="btn ghost sm" id="wsMode" title="워크시트 인쇄" aria-label="워크시트 인쇄">🖨️</button>
+  </div>` + brand(true) + `
   <div id="mine"></div>
   <div class="homegrid">
     <div class="card hero center">
@@ -394,6 +442,8 @@ function viewHome() {
     try { const code = await createRoom(); go(`#/host/${code}`); }
     catch (err) { $("#cerr").textContent = "방을 만들지 못했어요. 인터넷 연결과 Firebase 설정(DB 규칙)을 확인해 주세요."; console.error(err); b.disabled = false; }
   };
+  $("#localMode").onclick = () => go("#/local");
+  $("#wsMode").onclick = () => go("#/worksheet");
   $("#jf").onsubmit = e => { e.preventDefault(); const c = normCode($("#jc").value); if (CODE_RE.test(c)) go(`#/join/${c}`); else $("#jc").focus(); };
 
   const last = lsGet("streams.lastHost");
@@ -710,6 +760,126 @@ function viewHost(code) {
   detach = () => { ref.off("value", cb); document.removeEventListener("keydown", onEsc); };
 }
 
+/* ============ 워크시트 인쇄 (종이용 20칸 보드) ============ */
+function viewWorksheet() {
+  let per = +lsGet("streams.ws.per") === 1 ? 1 : 2;
+  let pages = Math.min(60, Math.max(1, parseInt(lsGet("streams.ws.pages"), 10) || 1));
+
+  app.innerHTML = `
+  <div class="noprint">
+    ${brand()}
+    <div class="card">
+      <h2>워크시트 인쇄 <span class="muted">종이에 쓰면서 하는 20칸 보드 (A4)</span></h2>
+      <div class="switch"><div><b>한 장에 보드</b><span class="muted">2개면 종이를 아낄 수 있어요.</span></div>
+        <div class="row"><button class="btn sm" id="p2">2개</button><button class="btn sm" id="p1">1개</button></div></div>
+      <div class="switch"><div><b>인쇄할 장수</b><span class="muted" id="wsInfo"></span></div>
+        <input class="txt" type="number" id="wsPages" min="1" max="60" inputmode="numeric" aria-label="인쇄할 장수" style="width:96px;text-align:center;font-size:20px;padding:8px 10px"></div>
+      <div class="row" style="margin-top:14px"><button class="btn" id="wsPrint">인쇄하기</button><button class="btn ghost" id="wsBack">돌아가기</button></div>
+    </div>
+  </div>
+  <div id="wsArea"></div>`;
+
+  const board = () => `<div class="ws">
+    <div class="wshead"><span class="wslogo">STREAMS 스트림스</span><span>이름 <span class="wsline"></span></span><span>점수 <span class="wsline short"></span> 점</span></div>
+    <div class="wsgrid">${Array.from({ length: CELLS }, (_, i) => {
+      const r = Math.floor(i / 5), c = i % 5, col = r % 2 ? 4 - c : c;   // 뱀 모양: 줄마다 방향이 바뀜
+      const ar = i === CELLS - 1 ? "" : c < 4 ? (r % 2 ? " al" : " ar") : " ad";
+      const tag = i === 0 ? "<em>시작</em>" : i === CELLS - 1 ? "<em>끝</em>" : "";
+      return `<div class="wsc${ar}" style="grid-column:${col + 1};grid-row:${r + 1}"><small>${i + 1}</small>${tag}</div>`;
+    }).join("")}</div>
+    <div class="wsfoot">숫자가 나오면 빈 칸 하나에 쓰세요. 한 번 쓰면 고칠 수 없어요. 화살표를 따라가며 숫자가 같거나 커지면 이어져요. ★ 조커는 원하는 숫자를 정해서 쓰고 ★ 표시를 해요.</div>
+    <div class="wsscore"><b>점수표</b> ${SCORE_TABLE.map((sc, i) => i >= 2 ? `<span>${i}칸 ${sc}점</span>` : "").join("")}</div>
+  </div>`;
+
+  function draw() {
+    $("#p2").classList.toggle("ghost", per !== 2);
+    $("#p1").classList.toggle("ghost", per !== 1);
+    $("#wsPages").value = pages;
+    $("#wsInfo").textContent = `보드 ${pages * per}개`;
+    $("#wsArea").className = per === 1 ? "per1" : "";
+    $("#wsArea").innerHTML = Array.from({ length: pages }, () => `<section class="wsp">${Array.from({ length: per }, board).join("")}</section>`).join("");
+  }
+  $("#p2").onclick = () => { per = 2; lsSet("streams.ws.per", 2); draw(); };
+  $("#p1").onclick = () => { per = 1; lsSet("streams.ws.per", 1); draw(); };
+  $("#wsPages").oninput = e => {
+    const v = parseInt(e.target.value, 10);
+    if (!v) return;
+    pages = Math.min(60, Math.max(1, v)); lsSet("streams.ws.pages", pages);
+    $("#wsInfo").textContent = `보드 ${pages * per}개`;
+    $("#wsArea").innerHTML = Array.from({ length: pages }, () => `<section class="wsp">${Array.from({ length: per }, board).join("")}</section>`).join("");
+  };
+  $("#wsPages").onchange = () => draw();
+  $("#wsPrint").onclick = () => window.print();
+  $("#wsBack").onclick = () => go("#/");
+  draw();
+}
+
+/* ============ 전자칠판 단독 모드 (학생 기기·방 없이 숫자만 뽑기) ============ */
+function viewLocal() {
+  app.classList.add("board");
+  let jokerOn = lsGet("streams.local.joker") !== "0";
+  let jc = Math.min(JOKER_MAX, Math.max(1, parseInt(lsGet("streams.local.jc"), 10) || 1));
+  let deck = buildDeck(jokerOn, jc), n = 0;
+
+  const newGame = () => { deck = buildDeck(jokerOn, jc); n = 0; render(); };
+  const draw = viaKey => { if (n < CELLS) { n++; render(true); } else if (!viaKey) newGame(); };
+  const undo = () => { if (n > 0) { n--; render(); } };
+
+  function render(pop) {
+    const cur = n ? deck[n - 1] : null, fin = n >= CELLS;
+    const status = !n ? "‘첫 숫자 뽑기’를 눌러 시작하세요."
+      : fin ? "20개를 모두 뽑았어요! 점수를 계산해 보세요."
+      : cur === 0 ? "★ 조커! 원하는 숫자(1~30)를 정해서 쓰세요."
+      : "칸 하나에 이 숫자를 쓰세요.";
+    const scoreChips = SCORE_TABLE.map((sc, i) => i >= 2 ? `<span class="chip">${i}칸 ${sc}점</span>` : "").join("");
+    app.innerHTML = `
+    <div class="bhead">${brand()}<div class="row"><a class="btn ghost sm" href="${base()}#/worksheet" target="_blank" rel="noopener" title="워크시트 인쇄" aria-label="워크시트 인쇄">🖨️</a><button class="btn ghost sm" id="lFs">전체 화면</button></div></div>
+    <div class="bplay">
+      <div class="bno">${n ? `${n} / ${CELLS}번째 숫자` : "준비됐나요?"}</div>
+      <div class="bigtile xl${cur === 0 ? " joker" : ""}${cur == null ? " empty" : ""}${pop ? " pop" : ""}">${cur == null ? "?" : tileText(cur)}</div>
+      <div class="bstat">${status}</div>
+      <div class="bbar" role="progressbar" aria-label="진행"><i style="width:${Math.round(n / CELLS * 100)}%"></i></div>
+      <div class="lbtns">
+        <button class="btn ghost" id="lUndo" ${n ? "" : "disabled"}>← 되돌리기</button>
+        <button class="btn big" id="lDraw">${fin ? "새 게임" : n ? "다음 숫자 뽑기" : "첫 숫자 뽑기"}</button>
+      </div>
+      ${n === 0 ? `<div class="card lset">
+        <div class="switch"><div><b>조커 사용</b><span class="muted">★ 타일을 넣어요.</span></div>
+          <button class="tog" id="lJ" role="switch" aria-checked="${jokerOn}" aria-label="조커 사용"></button></div>
+        ${jokerOn ? `<div class="switch"><div><b>조커 개수</b><span class="muted">숫자 타일 39장 + 조커 ${jc}장</span></div>
+          <div class="stepper"><button id="ljm" aria-label="조커 줄이기">−</button><output>${jc}</output><button id="ljp" aria-label="조커 늘리기">+</button></div></div>` : ""}
+      </div>` : ""}
+      <div class="card"><h2>나온 숫자</h2><div class="tiles left xl">${historyHTML(deck, n)}</div></div>
+      <details class="card lscore" ${fin ? "open" : ""}><summary>점수표 (이어진 칸 수)</summary><div>${scoreChips}</div></details>
+    </div>`;
+
+    $("#lDraw").onclick = () => draw(false);
+    $("#lUndo").onclick = undo;
+    const fs = $("#lFs");
+    if (!document.documentElement.requestFullscreen) fs.style.display = "none";
+    fs.onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); };
+    if (n === 0) {
+      $("#lJ").onclick = () => { jokerOn = !jokerOn; lsSet("streams.local.joker", jokerOn ? "1" : "0"); newGame(); };
+      if (jokerOn) {
+        $("#ljm").onclick = () => { jc = Math.max(1, jc - 1); lsSet("streams.local.jc", jc); newGame(); };
+        $("#ljp").onclick = () => { jc = Math.min(JOKER_MAX, jc + 1); lsSet("streams.local.jc", jc); newGame(); };
+      }
+    }
+  }
+
+  // 키보드·발표용 리모컨: →/PageDown = 다음 숫자, ←/PageUp = 되돌리기, 스페이스·엔터 = 다음 숫자
+  const onKey = e => {
+    if (e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
+    const k = e.key, onBtn = e.target && e.target.closest && e.target.closest("button");
+    if (k === "ArrowRight" || k === "PageDown") { e.preventDefault(); draw(true); }
+    else if (k === "ArrowLeft" || k === "PageUp") { e.preventDefault(); undo(); }
+    else if ((k === " " || k === "Enter") && !onBtn) { e.preventDefault(); draw(true); }
+  };
+  document.addEventListener("keydown", onKey);
+  detach = () => document.removeEventListener("keydown", onKey);
+  render();
+}
+
 /* ============ 전자칠판 화면 (보기 전용) ============ */
 function viewBoard(code) {
   app.classList.add("board");
@@ -932,6 +1102,8 @@ function viewJoin(code) {
   ref.on("value", cb);
   detach = () => ref.off("value", cb);
 }
+
+route(); // 모든 상수·함수가 정의된 뒤 첫 화면을 그린다
 </script>
 </body>
 </html>

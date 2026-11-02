@@ -321,6 +321,9 @@ header.brand.big{margin:4px 0 22px}
   .wsp{width:auto!important;padding:0!important;margin:0!important;border:0!important;border-radius:0!important;break-after:page;page-break-after:always}
   .wsp:last-child{break-after:auto;page-break-after:auto}
 }
+
+/* 방 번호: 숫자와 영문 글자 크기를 같게 (Black Han Sans는 숫자가 더 작게 나옴) */
+.code span,.codein{font-family:'Noto Sans KR',system-ui,sans-serif;font-weight:900;font-variant-numeric:lining-nums;font-feature-settings:"lnum"}
 </style>
 </head>
 <body>
@@ -347,7 +350,8 @@ const JOKER_MAX = 3;
 
 /* ============ 초기화 ============ */
 const app = document.getElementById("app");
-const configured = !/YOUR_/.test(firebaseConfig.databaseURL);
+const hasFirebase = typeof firebase !== "undefined";   // CDN이 막히면 undefined
+const configured = hasFirebase && !/YOUR_/.test(firebaseConfig.databaseURL);
 let db = null;
 if (configured) {
   firebase.initializeApp(firebaseConfig);
@@ -404,8 +408,17 @@ window.addEventListener("hashchange", route);
 /* ============ 설정 안내 ============ */
 function viewSetup() {
   app.innerHTML = brand() + `
-  <div class="card"><h2>Firebase 설정이 필요해요</h2>
-  <p class="muted">파일 상단의 <b>firebaseConfig</b>를 기존 Firebase 프로젝트 값으로 바꾸면 바로 동작해요. Realtime Database가 켜져 있어야 합니다.</p></div>`;
+  <div class="card"><h2>${hasFirebase ? "Firebase 설정이 필요해요" : "온라인 기능을 불러오지 못했어요"}</h2>
+  <p class="muted">${hasFirebase
+    ? "파일 상단의 <b>firebaseConfig</b>를 기존 Firebase 프로젝트 값으로 바꾸면 바로 동작해요. Realtime Database가 켜져 있어야 합니다."
+    : "인터넷 연결이나 학교 네트워크(Firebase 차단)를 확인해 주세요. 방 만들기·참가는 연결이 되어야 쓸 수 있어요."}</p>
+  <p class="muted">아래 두 가지는 인터넷 없이도 쓸 수 있어요.</p>
+  <div class="row">
+    <button class="btn ghost sm" id="sLocal" title="전자칠판 모드" aria-label="전자칠판 모드">🖥️ 전자칠판 모드</button>
+    <button class="btn ghost sm" id="sWs" title="워크시트 인쇄" aria-label="워크시트 인쇄">🖨️ 워크시트 인쇄</button>
+  </div></div>`;
+  $("#sLocal").onclick = () => go("#/local");
+  $("#sWs").onclick = () => go("#/worksheet");
 }
 
 /* ============ 홈 ============ */
@@ -552,7 +565,7 @@ function viewHost(code) {
     <div class="muted" style="margin-bottom:8px">방 번호</div>
     ${codeTiles(code)}
     <div style="margin-top:14px"><span class="pill" id="openPill"></span></div>
-    <div style="margin-top:14px"><a class="btn ghost sm" id="boardLink" target="_blank" rel="noopener">전자칠판 화면 열기</a></div>
+    <div style="margin-top:14px"><a class="btn ghost sm" id="boardLink">전자칠판 화면 열기</a></div>
   </div>
   <div id="warn"></div>
 
@@ -833,7 +846,7 @@ function viewLocal() {
       : "칸 하나에 이 숫자를 쓰세요.";
     const scoreChips = SCORE_TABLE.map((sc, i) => i >= 2 ? `<span class="chip">${i}칸 ${sc}점</span>` : "").join("");
     app.innerHTML = `
-    <div class="bhead">${brand()}<div class="row"><a class="btn ghost sm" href="${base()}#/worksheet" target="_blank" rel="noopener" title="워크시트 인쇄" aria-label="워크시트 인쇄">🖨️</a><button class="btn ghost sm" id="lFs">전체 화면</button></div></div>
+    <div class="bhead">${brand()}<div class="row"><button class="btn ghost sm" id="lBack">← 처음으로</button><a class="btn ghost sm" href="${base()}#/worksheet" target="_blank" rel="noopener" title="워크시트 인쇄" aria-label="워크시트 인쇄">🖨️</a><button class="btn ghost sm" id="lFs">전체 화면</button></div></div>
     <div class="bplay">
       <div class="bno">${n ? `${n} / ${CELLS}번째 숫자` : "준비됐나요?"}</div>
       <div class="bigtile xl${cur === 0 ? " joker" : ""}${cur == null ? " empty" : ""}${pop ? " pop" : ""}">${cur == null ? "?" : tileText(cur)}</div>
@@ -853,6 +866,7 @@ function viewLocal() {
       <details class="card lscore" ${fin ? "open" : ""}><summary>점수표 (이어진 칸 수)</summary><div>${scoreChips}</div></details>
     </div>`;
 
+    $("#lBack").onclick = () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); go("#/"); };
     $("#lDraw").onclick = () => draw(false);
     $("#lUndo").onclick = undo;
     const fs = $("#lFs");
@@ -870,7 +884,7 @@ function viewLocal() {
   // 키보드·발표용 리모컨: →/PageDown = 다음 숫자, ←/PageUp = 되돌리기, 스페이스·엔터 = 다음 숫자
   const onKey = e => {
     if (e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
-    const k = e.key, onBtn = e.target && e.target.closest && e.target.closest("button");
+    const k = e.key, onBtn = e.target && e.target.closest && e.target.closest("button, a, input, summary");
     if (k === "ArrowRight" || k === "PageDown") { e.preventDefault(); draw(true); }
     else if (k === "ArrowLeft" || k === "PageUp") { e.preventDefault(); undo(); }
     else if ((k === " " || k === "Enter") && !onBtn) { e.preventDefault(); draw(true); }
@@ -883,8 +897,9 @@ function viewLocal() {
 /* ============ 전자칠판 화면 (보기 전용) ============ */
 function viewBoard(code) {
   app.classList.add("board");
+  const isHost = !!lsGet("streams.host." + code);   // 이 기기가 방장이면 방장 화면으로, 아니면 처음 화면으로
   app.innerHTML = `
-  <div class="bhead">${brand()}<button class="btn ghost sm" id="fs">전체 화면</button></div>
+  <div class="bhead">${brand()}<div class="row"><button class="btn ghost sm" id="bBack">← ${isHost ? "방장 화면" : "처음으로"}</button><button class="btn ghost sm" id="fs">전체 화면</button></div></div>
   <div id="bMsg"></div>
   <div id="bLobby" class="blobby">
     <div class="card center">
@@ -907,6 +922,10 @@ function viewBoard(code) {
   <div id="bDone" style="display:none"><div class="card"><h2>결과</h2><div class="ranks" id="bRank"></div></div></div>`;
 
   new QRCode($("#bqr"), { text: joinLink(code), width: 260, height: 260, correctLevel: QRCode.CorrectLevel.M });
+  $("#bBack").onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    go(isHost ? `#/host/${code}` : "#/");
+  };
   const fs = $("#fs");
   if (!document.documentElement.requestFullscreen) fs.style.display = "none";
   fs.onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); };

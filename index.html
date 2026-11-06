@@ -152,6 +152,10 @@ input#jc2{text-transform:uppercase;letter-spacing:.2em;text-align:center}
 .chips{margin-top:10px}
 .chip{display:inline-block;background:var(--tile);border:1px solid var(--tile-b);border-radius:20px;padding:2px 11px;font-size:13px;font-weight:700;margin:2px 3px 2px 0}
 .chip.tot{background:var(--navy);border-color:var(--navy);color:#fff}
+/* 재입장 요청 */
+.rejoin{background:#fffbe6;border-color:#efdf9a}
+.rejoin .rq{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 0}
+.rejoin .rq + .rq{border-top:1px solid #efdf9a}
 /* 점수표 (몇 칸 연속 = 몇 점) */
 .mywrap{display:flex;gap:12px;align-items:flex-start}
 .mywrap > .path{flex:1;min-width:0}
@@ -361,7 +365,11 @@ const NAME_MAX = 8;
 const CODE_RE = /^[A-Z0-9]{6}$/;
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 헷갈리는 0,O,1,I 제외
 const normCode = c => String(c || "").trim().toUpperCase();
+const isWatch = (room, id) => !!(room.players && room.players[id] && room.players[id].watch); // 다음 판부터 참여(구경 중)
+const playIds = room => Object.keys(room.players || {}).filter(id => !isWatch(room, id));
+const lateOn = room => !room.settings || room.settings.lateJoin !== false;
 const JOKER_MAX = 3;
+const CLOSED_MSG = "지금은 새로 참가를 받지 않아요. 하다가 튕겼다면 원래 이름을 적고 입장하기를 누르세요.";
 
 /* ============ 초기화 ============ */
 const app = document.getElementById("app");
@@ -489,7 +497,7 @@ async function createRoom() {
       createdAt: firebase.database.ServerValue.TIMESTAMP,
       hostKey,
       phase: "lobby",
-      settings: { open: true, jokerOn: true, jokerCount: 1, showScore: true }
+      settings: { open: true, jokerOn: true, jokerCount: 1, showScore: true, lateJoin: true }
     } : undefined);
     if (res.committed) {
       lsSet("streams.host." + code, hostKey);
@@ -565,7 +573,7 @@ function historyHTML(deck, n) {
   return (deck || []).slice(0, n).map(v => `<i class="${v === 0 ? "s" : ""}">${tileText(v)}</i>`).join("");
 }
 function resultsHTML(room, myPid, openAll) {
-  const rows = Object.keys(room.players || {}).map(id => {
+  const rows = playIds(room).map(id => {
     const { a, jk } = readBoard(room, id);
     return { id, name: room.players[id].name, a, jk, score: calcScore(a) };
   }).sort((x, y) => y.score - x.score);
@@ -588,6 +596,7 @@ function viewHost(code) {
     <div style="margin-top:14px"><a class="btn ghost sm" id="boardLink">전자칠판 화면 열기</a></div>
   </div>
   <div id="warn"></div>
+  <div id="rejoinBox"></div>
 
   <div id="sLobby"><div class="cols"><div>
     <div class="card">
@@ -614,6 +623,8 @@ function viewHost(code) {
         <button class="tog" id="tJoker" role="switch" aria-label="조커 사용"></button></div>
       <div class="switch"><div><b>학생 화면에 실시간 점수 보이기</b><span class="muted">끄면 게임 중에는 내 점수가 안 보이고, 끝나면 공개돼요.</span></div>
         <button class="tog" id="tScore" role="switch" aria-label="실시간 점수 보이기"></button></div>
+      <div class="switch"><div><b>게임 중 새 학생 받기</b><span class="muted">늦게 온 학생이 ‘지금부터 참여(지난 칸은 비움)’나 ‘다음 판부터’ 중에 골라 들어와요.</span></div>
+        <button class="tog" id="tLate" role="switch" aria-label="게임 중 새 학생 받기"></button></div>
       <div class="switch" id="jcRow"><div><b>조커 개수</b><span class="muted" id="tileInfo"></span></div>
         <div class="stepper"><button id="jm" aria-label="조커 줄이기">−</button><output id="jn"></output><button id="jp" aria-label="조커 늘리기">+</button></div></div>
     
@@ -693,6 +704,7 @@ function viewHost(code) {
   const placedOf = id => (room.placed && room.placed[id]) || 0;
 
   $("#tOpen").onclick = () => set("settings/open", !room.settings.open);
+  $("#tLate").onclick = () => set("settings/lateJoin", room.settings.lateJoin === false);
   $("#tScore").onclick = () => set("settings/showScore", room.settings.showScore === false);
   $("#tJoker").onclick = () => set("settings/jokerOn", !room.settings.jokerOn);
   $("#jm").onclick = () => set("settings/jokerCount", Math.max(1, (room.settings.jokerCount || 1) - 1));
@@ -714,10 +726,12 @@ function viewHost(code) {
     ref.update({
       phase: "playing",
       game: { deck: buildDeck(!!s.jokerOn, s.jokerCount || 1), n: 0, cur: null },
-      boards: null, placed: null,
-      "settings/open": false
+      boards: null, placed: null, rejoin: null,
+      "settings/open": false,
+      ...clearWatch()
     });
   };
+  const clearWatch = () => { const u = {}; Object.keys(room.players || {}).forEach(id => { if (isWatch(room, id)) u[`players/${id}/watch`] = null; }); return u; };
   const advance = () => {
     if (!isHost() || drawing || !room.game) return;
     const g = room.game;
@@ -729,7 +743,7 @@ function viewHost(code) {
   $("#force").onclick = () => { if (confirm("아직 쓰지 않은 학생이 있어요. 그래도 다음 숫자를 뽑을까요?\n(못 쓴 칸은 비어 있게 돼요)")) advance(); };
   $("#again").onclick = () => {
     if (!isHost() || !confirm("점수를 지우고 대기실로 돌아갈까요?")) return;
-    ref.update({ phase: "lobby", game: null, boards: null, placed: null, "settings/open": true });
+    ref.update({ phase: "lobby", game: null, boards: null, placed: null, rejoin: null, "settings/open": true, ...clearWatch() });
   };
 
   const cb = snap => {
@@ -748,18 +762,32 @@ function viewHost(code) {
 
     const ids = Object.keys(room.players || {}).sort((a, b) => room.players[a].joinedAt - room.players[b].joinedAt);
 
+    // 튕긴 학생의 재입장 요청
+    const reqs = Object.entries(room.rejoin || {}).filter(([, v]) => v && v.ok == null);
+    const rb = $("#rejoinBox");
+    rb.innerHTML = isHost() && reqs.length ? `<div class="card rejoin"><h2>다시 들어오려는 학생 <span class="muted">${reqs.length}명</span></h2>
+      ${reqs.map(([k, v]) => `<div class="rq"><span><b>${esc(v.name)}</b> <span class="muted">같은 이름으로 다시 들어오려고 해요</span></span>
+        <span class="row"><button class="btn sm" data-ok="${k}">들여보내기</button><button class="btn danger sm" data-no="${k}">거절</button></span></div>`).join("")}
+      <div class="muted" style="margin-top:6px">본인이 맞는지 확인하고 들여보내 주세요. 칸에 쓴 숫자는 그대로 이어져요.</div></div>` : "";
+    rb.querySelectorAll("[data-ok]").forEach(b => b.onclick = () => {
+      const k = b.dataset.ok, v = room.rejoin[k];
+      ref.child(`rejoin/${k}/ok`).set(!!(v && room.players && room.players[v.pid]));
+    });
+    rb.querySelectorAll("[data-no]").forEach(b => b.onclick = () => ref.child(`rejoin/${b.dataset.no}/ok`).set(false));
+
     if (phase === "lobby") {
-      $("#setSum").textContent = (jOn ? `조커 ${jc}장 사용` : "조커 없음") + " · " + (s.showScore === false ? "실시간 점수 숨김" : "실시간 점수 보임") + " · " + (open ? "참가 받는 중" : "참가 닫힘");
+      $("#setSum").textContent = (jOn ? `조커 ${jc}장 사용` : "조커 없음") + " · " + (s.showScore === false ? "실시간 점수 숨김" : "실시간 점수 보임") + " · " + (s.lateJoin === false ? "중간 입장 안 받음" : "중간 입장 받음") + " · " + (open ? "참가 받는 중" : "참가 닫힘");
       $("#tOpen").setAttribute("aria-checked", open);
       $("#tJoker").setAttribute("aria-checked", jOn);
       $("#tScore").setAttribute("aria-checked", s.showScore !== false);
+      $("#tLate").setAttribute("aria-checked", s.lateJoin !== false);
       $("#jcRow").style.display = jOn ? "" : "none";
       $("#jn").textContent = jc;
       $("#tileInfo").textContent = `숫자 타일 39장 + 조커 ${jc}장 = ${39 + jc}장`;
       $("#cnt").textContent = ids.length ? `${ids.length}명` : "";
       $("#kickAll").style.display = ids.length ? "" : "none";
       $("#start").disabled = !ids.length;
-      $("#startHint").textContent = ids.length ? "시작하면 새 학생은 들어올 수 없어요." : "학생이 한 명 이상 들어와야 시작할 수 있어요.";
+      $("#startHint").textContent = ids.length ? (s.lateJoin === false ? "시작하면 새 학생은 들어올 수 없어요." : "늦게 온 학생은 게임 중에도 들어올 수 있어요.") : "학생이 한 명 이상 들어와야 시작할 수 있어요.";
       const ul = $("#plist");
       if (!ids.length) ul.innerHTML = `<li class="empty" style="grid-column:1/-1;display:block">아직 아무도 없어요. QR이나 링크를 보내 주세요.</li>`;
       else {
@@ -774,19 +802,21 @@ function viewHost(code) {
 
     if (phase === "playing") {
       const g = room.game || { n: 0, cur: null, deck: [] }, n = g.n || 0;
-      const done = ids.filter(id => placedOf(id) >= n).length;
-      const all = done === ids.length;
+      const pIds = ids.filter(id => !isWatch(room, id));
+      const done = pIds.filter(id => placedOf(id) >= n).length;
+      const all = done === pIds.length;
       $("#pNo").textContent = n ? `${n} / ${CELLS}번째 숫자` : "준비되면 첫 숫자를 뽑아요";
       const cur = $("#pCur");
       cur.textContent = g.cur == null ? "?" : tileText(g.cur);
       cur.className = "bigtile" + (g.cur === 0 ? " joker" : "") + (g.cur == null ? " empty" : "");
-      $("#pProg").textContent = n ? (g.cur === 0 ? "조커! 학생이 원하는 숫자를 정해요. " : "") + `쓰기 완료 ${done} / ${ids.length}명` : "";
+      $("#pProg").textContent = n ? (g.cur === 0 ? "조커! 학생이 원하는 숫자를 정해요. " : "") + `쓰기 완료 ${done} / ${pIds.length}명` : "";
       $("#draw").textContent = n === 0 ? "첫 숫자 뽑기" : n < CELLS ? "다음 숫자 뽑기" : "결과 보기";
       $("#draw").disabled = n > 0 && !all;
       $("#force").style.display = n > 0 && !all ? "" : "none";
       $("#hist").innerHTML = historyHTML(g.deck, n);
       $("#pcnt").textContent = ids.length ? `${ids.length}명` : "";
       $("#pstat").innerHTML = ids.map(id => {
+        if (isWatch(room, id)) return `<li><span class="nm">${esc(room.players[id].name)}</span><span class="wait">다음 판부터</span></li>`;
         const ok = n === 0 || placedOf(id) >= n;
         return `<li><span class="nm">${esc(room.players[id].name)}</span><span class="${ok ? "ok" : "wait"}">${n === 0 ? "" : ok ? "✓ 완료" : "쓰는 중"}</span></li>`;
       }).join("");
@@ -975,17 +1005,18 @@ function viewBoard(code) {
     }
     if (phase === "playing") {
       const g = room.game || { n: 0, cur: null, deck: [] }, n = g.n || 0;
-      const done = ids.filter(id => ((room.placed && room.placed[id]) || 0) >= n).length;
+      const pIds = ids.filter(id => !isWatch(room, id));
+      const done = pIds.filter(id => ((room.placed && room.placed[id]) || 0) >= n).length;
       $("#bNo").textContent = n ? `${n} / ${CELLS}번째 숫자` : "곧 시작해요";
       const cur = $("#bCur");
       cur.textContent = g.cur == null ? "?" : tileText(g.cur);
       cur.className = "bigtile xl" + (g.cur === 0 ? " joker" : "") + (g.cur == null ? " empty" : "");
-      $("#bProg").textContent = !n ? "" : (g.cur === 0 ? "조커! 원하는 숫자를 정해서 쓰세요 · " : "") + `쓰기 완료 ${done} / ${ids.length}명`;
-      $("#bBar").style.width = (n && ids.length ? Math.round(done / ids.length * 100) : 0) + "%";
+      $("#bProg").textContent = !n ? "" : (g.cur === 0 ? "조커! 원하는 숫자를 정해서 쓰세요 · " : "") + `쓰기 완료 ${done} / ${pIds.length}명`;
+      $("#bBar").style.width = (n && pIds.length ? Math.round(done / pIds.length * 100) : 0) + "%";
       $("#bHist").innerHTML = historyHTML(g.deck, n);
     }
     if (phase === "finished") {
-      const rows = ids.map(id => ({ name: room.players[id].name, score: calcScore(readBoard(room, id).a) })).sort((x, y) => y.score - x.score);
+      const rows = ids.filter(id => !isWatch(room, id)).map(id => ({ name: room.players[id].name, score: calcScore(readBoard(room, id).a) })).sort((x, y) => y.score - x.score);
       let rank = 0, prev = null;
       rows.forEach((r, i) => { if (r.score !== prev) { rank = i + 1; prev = r.score; } r.rank = rank; });
       $("#bRank").innerHTML = rows.map(r => `<div class="rrow${r.rank <= 3 ? " r" + r.rank : ""}"><span class="rk">${r.rank}</span><span class="nm">${esc(r.name)}</span><span class="sc">${r.score}점</span></div>`).join("");
@@ -1007,42 +1038,77 @@ function viewJoin(code) {
   }
   const ref = roomRef(code);
   const pidKey = "streams.pid." + code;
+  const reqKey = "streams.req." + code;
   const nameKey = "streams.name";
-  let joined = false, lastRoom = null, sel = null, jv = null, selN = -1, busy = false;
+  let joined = false, lastMode = null, lastRoom = null, sel = null, jv = null, selN = -1, busy = false;
 
   app.innerHTML = brand() + `<div id="body"><div class="card center muted">방을 찾는 중…</div></div>`;
   const body = $("#body");
 
+  function joinMode(room) {   // "lobby" | "late"(게임 중) | "next"(결과 화면) | ""(못 들어옴)
+    const ph = room.phase || "lobby";
+    if (ph === "lobby") return room.settings && room.settings.open ? "lobby" : "";
+    if (!lateOn(room)) return "";
+    return ph === "playing" ? "late" : "next";
+  }
+  function formButtons(mode) {
+    if (mode === "late") return `<div class="muted" style="margin:4px 0 10px">게임이 이미 시작했어요. 어떻게 참여할까요?</div>
+        <button class="btn big" data-m="now">지금부터 참여 <span style="font-weight:500;font-size:15px">(지난 칸은 비어요)</span></button>
+        <button class="btn big blue" data-m="next" style="margin-top:10px">이번 판은 구경, 다음 판부터</button>`;
+    if (mode === "next") return `<div class="muted" style="margin:4px 0 10px">이번 판은 끝났어요. 다음 판부터 함께해요.</div><button class="btn big" data-m="next">입장하기</button>`;
+    return `<button class="btn big" data-m="lobby">입장하기</button>`;
+  }
   function showForm(room) {
-    const open = room.settings && room.settings.open && (room.phase || "lobby") === "lobby";
+    const mode = joinMode(room), open = !!mode;
+    lastMode = mode;
     body.innerHTML = `
     <div class="card center"><div class="muted" style="margin-bottom:8px">방 번호</div>${codeTiles(code)}</div>
     <div class="card">
       <h2>내 이름을 적어 주세요</h2>
       <p class="muted" style="margin:0 0 10px">별명이 아니라 <b>진짜 이름</b>으로 적어요. 누구인지 알아볼 수 있어야 해요.</p>
       <form id="nf">
-        <input class="txt" id="nm" maxlength="${NAME_MAX}" placeholder="예: 김하늘" autocomplete="off" aria-label="이름" value="${esc(lsGet(nameKey) || "")}" ${open ? "" : "disabled"}>
-        <div class="err" id="ne" role="alert">${open ? "" : "지금은 참가를 받지 않고 있어요. 방장에게 말씀드리세요."}</div>
-        <button class="btn big" ${open ? "" : "disabled"}>입장하기</button>
+        <input class="txt" id="nm" maxlength="${NAME_MAX}" placeholder="예: 김하늘" autocomplete="off" aria-label="이름" value="${esc(lsGet(nameKey) || "")}">
+        <div class="err" id="ne" role="alert">${open ? "" : CLOSED_MSG}</div>
+        <div id="fbtns">${formButtons(mode)}</div>
       </form>
     </div>`;
     if (open) $("#nm").focus();
+    let how = mode === "late" ? "now" : mode === "next" ? "next" : "lobby";
+    $("#nf").addEventListener("click", e => { const b = e.target.closest("[data-m]"); if (b) how = b.dataset.m; });
     $("#nf").onsubmit = async e => {
       e.preventDefault();
       const name = $("#nm").value.trim().replace(/\s+/g, " ");
       const err = $("#ne");
       if (!name) { err.textContent = "이름을 적어 주세요."; return; }
-      const btn = $("#nf button"); btn.disabled = true;
+      const btns = [...$("#nf").querySelectorAll("button")];
+      const btn = { set disabled(v) { btns.forEach(b => (b.disabled = v)); } }; btn.disabled = true;
       try {
         const snap = await ref.once("value");
         const r = snap.val();
         if (!r) { err.textContent = "방이 없어졌어요."; btn.disabled = false; return; }
-        if (!(r.settings && r.settings.open) || (r.phase || "lobby") !== "lobby") { err.textContent = "지금은 참가를 받지 않고 있어요."; btn.disabled = false; return; }
-        const dup = Object.values(r.players || {}).some(p => p.name === name);
-        if (dup) { err.textContent = "같은 이름이 이미 있어요. 이름 뒤에 번호를 붙여 주세요. (예: 김하늘2)"; btn.disabled = false; return; }
+        const same = Object.entries(r.players || {}).find(([, p]) => p.name === name);
+        if (same) {
+          if (!confirm(`‘${name}’ 이름이 이미 방에 있어요.\n\n튕겨서 다시 들어오는 거라면 [확인]을 눌러 선생님께 재입장을 요청하세요.\n다른 친구라면 [취소]를 누르고 이름 뒤에 번호를 붙여 주세요.`)) {
+            err.textContent = "같은 이름이 이미 있어요. 이름 뒤에 번호를 붙여 주세요. (예: 김하늘2)"; btn.disabled = false; return;
+          }
+          const q = ref.child("rejoin").push();
+          lsSet(reqKey, q.key); lsSet(nameKey, name);
+          try { await q.set({ pid: same[0], name, at: firebase.database.ServerValue.TIMESTAMP }); }
+          catch (ex) { lsDel(reqKey); throw ex; }
+          return;
+        }
+        const m = joinMode(r);
+        if (!m) { err.textContent = CLOSED_MSG; btn.disabled = false; return; }
+        if (m !== lastMode) { showForm(r); $("#ne").textContent = "게임 상황이 바뀌었어요. 다시 골라 주세요."; return; }
         const pref = ref.child("players").push();
-        await pref.set({ name, joinedAt: firebase.database.ServerValue.TIMESTAMP });
+        const watch = m === "next" || (m === "late" && how === "next");
         lsSet(pidKey, pref.key); lsSet(nameKey, name);
+        const upd = { [`players/${pref.key}`]: { name, joinedAt: firebase.database.ServerValue.TIMESTAMP, ...(watch ? { watch: true } : {}) } };
+        if (m === "late" && !watch) {   // 지금부터 참여: 지금 나온 숫자부터 쓰고, 지난 칸은 비워 둠
+          const n = (r.game && r.game.n) || 0;
+          upd[`placed/${pref.key}`] = Math.max(0, n - 1);
+        }
+        try { await ref.update(upd); } catch (ex) { lsDel(pidKey); throw ex; }
         joined = true;
       } catch (ex) { console.error(ex); err.textContent = "입장하지 못했어요. 다시 시도해 주세요."; btn.disabled = false; }
     };
@@ -1104,9 +1170,26 @@ function viewJoin(code) {
     };
   }
 
+  function showWatch(room, pid) {
+    const g = room.game || { n: 0, cur: null, deck: [] }, n = g.n || 0;
+    body.innerHTML = `
+    <div class="card center">
+      <div class="muted">${esc(room.players[pid].name)} · 이번 판은 구경 중</div>
+      <div class="bigtile${g.cur === 0 ? " joker" : ""}${g.cur == null ? " empty" : ""}">${g.cur == null ? "?" : tileText(g.cur)}</div>
+      <div class="stat">${n ? n + " / " + CELLS + "번째 숫자" : "곧 시작해요"}</div>
+      <p class="muted" style="margin:0">다음 판이 시작되면 자동으로 함께해요.<br>나도 어디에 쓸지 머릿속으로 생각해 보세요!</p>
+    </div>
+    <div class="card"><h2>나온 숫자</h2><div class="tiles left sm">${historyHTML(g.deck, n)}</div></div>`;
+  }
+
   function showResult(room, pid) {
+    if (isWatch(room, pid)) {
+      body.innerHTML = `<div class="card center"><div class="muted">${esc(room.players[pid].name)}</div><p style="font-weight:900;margin:8px 0 0">다음 판부터 함께해요! 선생님이 다시 시작할 때까지 기다려 주세요.</p></div>
+      <div class="card"><h2>이번 판 결과</h2>${resultsHTML(room, null, false)}</div>`;
+      return;
+    }
     const mine = readBoard(room, pid);
-    const all = Object.keys(room.players).map(id => calcScore(readBoard(room, id).a)).sort((x, y) => y - x);
+    const all = playIds(room).map(id => calcScore(readBoard(room, id).a)).sort((x, y) => y - x);
     const sc = calcScore(mine.a), rank = all.indexOf(sc) + 1;
     body.innerHTML = `
     <div class="card center">
@@ -1115,6 +1198,18 @@ function viewJoin(code) {
       <div class="stat">${rank}등 · ${all.length}명 중</div>
     </div>
     <div class="card"><h2>결과</h2>${resultsHTML(room, pid, false)}</div>`;
+  }
+
+  function showRejoinWait(rq, name) {
+    if ($("#rjw")) return;
+    body.innerHTML = `
+    <div class="card center" id="rjw">
+      ${codeTiles(code, true)}
+      <h2 style="font-size:24px;margin:16px 0 4px">${esc(name)}</h2>
+      <p class="muted" style="margin:0 0 16px">선생님께 다시 들어가겠다고 요청했어요.<br>선생님이 들여보내 주면 바로 이어서 할 수 있어요.</p>
+      <button class="btn ghost" id="rjCancel">요청 취소</button>
+    </div>`;
+    $("#rjCancel").onclick = () => { lsDel(reqKey); ref.child("rejoin/" + rq).remove(); };
   }
 
   function showBlocked(msg) {
@@ -1126,23 +1221,39 @@ function viewJoin(code) {
     const room = snap.val();
     lastRoom = room;
     if (!room) { showBlocked("방이 없어요. 방 번호를 다시 확인해 주세요."); return; }
-    const pid = lsGet(pidKey);
+    let pid = lsGet(pidKey), formMsg = "";
+    const rq = lsGet(reqKey);
+    if (rq && !(pid && room.players && room.players[pid])) {
+      const r = room.rejoin && room.rejoin[rq];
+      if (r && r.ok === true && room.players && room.players[r.pid]) {
+        lsSet(pidKey, r.pid); lsDel(reqKey); pid = r.pid; sel = null; jv = null;
+        ref.child("rejoin/" + rq).remove();
+      } else if (r && r.ok == null) { showRejoinWait(rq, r.name); return; }
+      else {
+        lsDel(reqKey);
+        if (r) ref.child("rejoin/" + rq).remove();
+        formMsg = r && r.ok === false ? "선생님이 재입장 요청을 받지 않았어요. 선생님께 말씀드리세요." : "";
+        if ($("#rjw")) body.innerHTML = "";
+      }
+    }
     if (pid && room.kicked && room.kicked[pid]) { lsDel(pidKey); showBlocked("방장이 방에서 내보냈어요. 방장에게 말씀드리세요."); return; }
     if (pid && room.players && room.players[pid]) {
       const ph = room.phase || "lobby";
-      if (ph === "playing") showPlay(room, pid);
+      if (ph === "playing" && isWatch(room, pid)) showWatch(room, pid);
+      else if (ph === "playing") showPlay(room, pid);
       else if (ph === "finished") showResult(room, pid);
       else showWait(room, pid);
       return;
     }
     if (pid) lsDel(pidKey);
-    if (!$("#nf") || joined) showForm(room);
+    if (!$("#nf") || joined) { joined = false; showForm(room); }
     else {
-      const open = room.settings && room.settings.open && (room.phase || "lobby") === "lobby";
-      $("#nm").disabled = !open; $("#nf button").disabled = !open;
-      if (!open) $("#ne").textContent = "지금은 참가를 받지 않고 있어요.";
-      else if ($("#ne").textContent.startsWith("지금은")) $("#ne").textContent = "";
+      const mode = joinMode(room), open = !!mode;
+      if (mode !== lastMode) { lastMode = mode; $("#fbtns").innerHTML = formButtons(mode); }
+      if (!open && !$("#ne").textContent) $("#ne").textContent = CLOSED_MSG;
+      else if (open && $("#ne").textContent === CLOSED_MSG) $("#ne").textContent = "";
     }
+    if (formMsg) { $("#ne").textContent = formMsg; $("#nf button").disabled = false; }
   };
   ref.on("value", cb);
   detach = () => ref.off("value", cb);

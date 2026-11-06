@@ -152,6 +152,21 @@ input#jc2{text-transform:uppercase;letter-spacing:.2em;text-align:center}
 .chips{margin-top:10px}
 .chip{display:inline-block;background:var(--tile);border:1px solid var(--tile-b);border-radius:20px;padding:2px 11px;font-size:13px;font-weight:700;margin:2px 3px 2px 0}
 .chip.tot{background:var(--navy);border-color:var(--navy);color:#fff}
+/* 점수표 (몇 칸 연속 = 몇 점) */
+.mywrap{display:flex;gap:12px;align-items:flex-start}
+.mywrap > .path{flex:1;min-width:0}
+.stbl{list-style:none;margin:0;padding:0;display:grid;gap:3px}
+.stbl.v{width:96px;flex:none;grid-template-columns:1fr}
+.stbl.h{grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:6px}
+.stbl li{display:flex;justify-content:space-between;align-items:center;gap:4px;padding:2px 8px;border-radius:7px;background:#f3f6fa;border:1px solid #e1e7ee;font-size:12px;line-height:1.5;white-space:nowrap}
+.stbl li b{font-weight:700;color:var(--sub)}
+.stbl li span{font-weight:900;color:var(--navy)}
+.stbl li.has{background:var(--yellow);border-color:var(--yellow-d)}
+.stbl li.has b{color:var(--navy)}
+.stbl .ttl{display:block;text-align:center;background:none;border:0;font-weight:900;color:var(--sub);padding:0 0 2px}
+.board .stbl.h{grid-template-columns:repeat(auto-fill,minmax(clamp(90px,8.5vw,150px),1fr));gap:clamp(6px,.7vw,12px)}
+.board .stbl.h li{font-size:clamp(15px,1.5vw,26px);padding:clamp(4px,.5vw,8px) clamp(8px,1vw,16px);border-radius:10px}
+@media (max-width:420px){.mywrap{gap:8px}.stbl.v{width:78px}.stbl.v li{padding:1px 5px;font-size:11px}}
 .jpick{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:10px}
 .jpick button{height:40px;border-radius:8px;border:2px solid var(--tile-b);background:var(--tile);font-family:var(--disp);font-size:18px;cursor:pointer;box-shadow:0 2px 0 var(--tile-s)}
 .jpick button.on{background:var(--yellow);border-color:var(--navy)}
@@ -474,7 +489,7 @@ async function createRoom() {
       createdAt: firebase.database.ServerValue.TIMESTAMP,
       hostKey,
       phase: "lobby",
-      settings: { open: true, jokerOn: true, jokerCount: 1 }
+      settings: { open: true, jokerOn: true, jokerCount: 1, showScore: true }
     } : undefined);
     if (res.committed) {
       lsSet("streams.host." + code, hostKey);
@@ -535,6 +550,11 @@ function boardHTML(a, jk, o = {}) {
   }
   return h + "</div>";
 }
+function scoreTableHTML(a, vertical) {
+  const has = new Set(a ? getRuns(a).filter(r => r.length >= 2).map(r => r.length) : []);
+  const items = SCORE_TABLE.map((sc, i) => i >= 2 ? `<li class="${has.has(i) ? "has" : ""}"><b>${i}칸</b><span>${sc}점</span></li>` : "").join("");
+  return `<ul class="stbl ${vertical ? "v" : "h"}" aria-label="점수표: 이어진 칸 수별 점수">${vertical ? '<li class="ttl">점수표</li>' : ""}${items}</ul>`;
+}
 function breakdownHTML(a) {
   const runs = getRuns(a).filter(r => r.length >= 2);
   const chips = runs.map(r => `<span class="chip">${r.length}칸 +${SCORE_TABLE[r.length]}</span>`).join("");
@@ -592,6 +612,8 @@ function viewHost(code) {
         <button class="tog" id="tOpen" role="switch" aria-label="학생 참가 받기"></button></div>
       <div class="switch"><div><b>조커 사용</b><span class="muted">★ 타일을 게임에 넣어요.</span></div>
         <button class="tog" id="tJoker" role="switch" aria-label="조커 사용"></button></div>
+      <div class="switch"><div><b>학생 화면에 실시간 점수 보이기</b><span class="muted">끄면 게임 중에는 내 점수가 안 보이고, 끝나면 공개돼요.</span></div>
+        <button class="tog" id="tScore" role="switch" aria-label="실시간 점수 보이기"></button></div>
       <div class="switch" id="jcRow"><div><b>조커 개수</b><span class="muted" id="tileInfo"></span></div>
         <div class="stepper"><button id="jm" aria-label="조커 줄이기">−</button><output id="jn"></output><button id="jp" aria-label="조커 늘리기">+</button></div></div>
     
@@ -625,6 +647,7 @@ function viewHost(code) {
     </div>
     </div><div>
     <div class="card"><h2>나온 숫자</h2><div class="tiles left sm" id="hist"></div></div>
+    <div class="card"><h2>점수표 <span class="muted">이어진 칸 수 → 점수</span></h2>${scoreTableHTML(null, false)}</div>
     <div class="card"><h2>학생 현황 <span class="muted" id="pcnt"></span></h2><ul class="plist" id="pstat"></ul></div>
     </div></div>
   </div>
@@ -670,6 +693,7 @@ function viewHost(code) {
   const placedOf = id => (room.placed && room.placed[id]) || 0;
 
   $("#tOpen").onclick = () => set("settings/open", !room.settings.open);
+  $("#tScore").onclick = () => set("settings/showScore", room.settings.showScore === false);
   $("#tJoker").onclick = () => set("settings/jokerOn", !room.settings.jokerOn);
   $("#jm").onclick = () => set("settings/jokerCount", Math.max(1, (room.settings.jokerCount || 1) - 1));
   $("#jp").onclick = () => set("settings/jokerCount", Math.min(JOKER_MAX, (room.settings.jokerCount || 1) + 1));
@@ -725,9 +749,10 @@ function viewHost(code) {
     const ids = Object.keys(room.players || {}).sort((a, b) => room.players[a].joinedAt - room.players[b].joinedAt);
 
     if (phase === "lobby") {
-      $("#setSum").textContent = (jOn ? `조커 ${jc}장 사용` : "조커 없음") + " · " + (open ? "참가 받는 중" : "참가 닫힘");
+      $("#setSum").textContent = (jOn ? `조커 ${jc}장 사용` : "조커 없음") + " · " + (s.showScore === false ? "실시간 점수 숨김" : "실시간 점수 보임") + " · " + (open ? "참가 받는 중" : "참가 닫힘");
       $("#tOpen").setAttribute("aria-checked", open);
       $("#tJoker").setAttribute("aria-checked", jOn);
+      $("#tScore").setAttribute("aria-checked", s.showScore !== false);
       $("#jcRow").style.display = jOn ? "" : "none";
       $("#jn").textContent = jc;
       $("#tileInfo").textContent = `숫자 타일 39장 + 조커 ${jc}장 = ${39 + jc}장`;
@@ -844,7 +869,6 @@ function viewLocal() {
       : fin ? "20개를 모두 뽑았어요! 점수를 계산해 보세요."
       : cur === 0 ? "★ 조커! 원하는 숫자(1~30)를 정해서 쓰세요."
       : "칸 하나에 이 숫자를 쓰세요.";
-    const scoreChips = SCORE_TABLE.map((sc, i) => i >= 2 ? `<span class="chip">${i}칸 ${sc}점</span>` : "").join("");
     app.innerHTML = `
     <div class="bhead">${brand()}<div class="row"><button class="btn ghost sm" id="lBack">← 처음으로</button><a class="btn ghost sm" href="${base()}#/worksheet" target="_blank" rel="noopener" title="워크시트 인쇄" aria-label="워크시트 인쇄">🖨️</a><button class="btn ghost sm" id="lFs">전체 화면</button></div></div>
     <div class="bplay">
@@ -863,7 +887,7 @@ function viewLocal() {
           <div class="stepper"><button id="ljm" aria-label="조커 줄이기">−</button><output>${jc}</output><button id="ljp" aria-label="조커 늘리기">+</button></div></div>` : ""}
       </div>` : ""}
       <div class="card"><h2>나온 숫자</h2><div class="tiles left xl">${historyHTML(deck, n)}</div></div>
-      <details class="card lscore" ${fin ? "open" : ""}><summary>점수표 (이어진 칸 수)</summary><div>${scoreChips}</div></details>
+      <div class="card" style="text-align:left"><h2>점수표 <span class="muted">이어진 칸 수 → 점수</span></h2>${scoreTableHTML(null, false)}</div>
     </div>`;
 
     $("#lBack").onclick = () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); go("#/"); };
@@ -918,6 +942,7 @@ function viewBoard(code) {
     <div class="bstat" id="bProg"></div>
     <div class="bbar" role="progressbar" aria-label="쓰기 완료"><i id="bBar"></i></div>
     <div class="card"><h2>나온 숫자</h2><div class="tiles left xl" id="bHist"></div></div>
+    <div class="card" style="text-align:left"><h2>점수표 <span class="muted">이어진 칸 수 → 점수</span></h2>${scoreTableHTML(null, false)}</div>
   </div>
   <div id="bDone" style="display:none"><div class="card"><h2>결과</h2><div class="ranks" id="bRank"></div></div></div>`;
 
@@ -1043,6 +1068,7 @@ function viewJoin(code) {
     const placed = (room.placed && room.placed[pid]) || 0;
     const { a, jk } = readBoard(room, pid);
     const isJ = g.cur === 0;
+    const showSc = !room.settings || room.settings.showScore !== false;
     const canPlace = g.cur != null && placed < n;
     const val = canPlace ? (isJ ? jv : g.cur) : null;
     const ready = canPlace && sel != null && val != null;
@@ -1060,8 +1086,8 @@ function viewJoin(code) {
     </div>
     <div class="card">
       <h2>내 칸 <span class="muted">왼쪽 위에서 오른쪽으로, 줄 끝은 다음 줄 처음과 이어져요</span></h2>
-      ${boardHTML(a, jk, { sel, preview: ready ? val : null, canPick: canPlace })}
-      <div class="chips">${breakdownHTML(a)}</div>
+      <div class="mywrap">${boardHTML(a, jk, { sel, preview: ready ? val : null, canPick: canPlace })}${scoreTableHTML(showSc ? a : null, true)}</div>
+      ${showSc ? `<div class="chips">${breakdownHTML(a)}</div>` : '<div class="hint">점수는 게임이 끝나면 공개돼요. 점수표를 보고 직접 계산해 보세요!</div>'}
     </div>
     <div class="card"><h2>나온 숫자</h2><div class="tiles left sm">${historyHTML(g.deck, n)}</div></div>`;
 
